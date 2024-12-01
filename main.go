@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/rickKoch/tcpip/net"
 )
@@ -18,7 +19,25 @@ func main() {
 	devMgr := net.New()
 	defer devMgr.Close()
 
-	f, err := os.CreateTemp("", "dummy.dev")
+	loopbackDev, err := net.NewLoopbackDevice("loopback0")
+	if err != nil {
+		panic(err)
+	}
+
+	if err := devMgr.Register(ctx, loopbackDev); err != nil {
+		panic(err)
+	}
+
+	go func() {
+		for {
+			time.Sleep(5 * time.Second)
+			if err := devMgr.Write("loopback0", []byte("testing loopback")); err != nil {
+				fmt.Println("ERROR", err)
+			}
+		}
+	}()
+
+	f, err := os.CreateTemp("", "dummy1.dev")
 	if err != nil {
 		panic(err)
 	}
@@ -26,26 +45,7 @@ func main() {
 
 	fmt.Println("FILENAME::", f.Name())
 
-
 	dummyDev, err := net.NewDummyDevice(f.Name())
-	if err != nil {
-		panic(err)
-	}
-
-	if err := devMgr.Register(ctx, dummyDev); err != nil {
-		panic(err)
-	}
-
-	f1, err := os.CreateTemp("", "dummy1.dev")
-	if err != nil {
-		panic(err)
-	}
-	defer os.Remove(f1.Name())
-
-	fmt.Println("FILENAME::", f1.Name())
-
-
-	dummyDev, err = net.NewDummyDevice(f1.Name())
 	if err != nil {
 		panic(err)
 	}

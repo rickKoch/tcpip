@@ -41,6 +41,13 @@ func (mgr *deviceManager) Register(ctx context.Context, dev *device) error {
 
 	mgr.devices[dev.name] = dev
 
+	go func(ctx context.Context, dev *device) {
+		<-ctx.Done()
+		if err := dev.close(); err != nil {
+			fmt.Println("error during closing the device")
+		}
+	}(ctx, dev)
+
 	go func(ctx context.Context, mgr *deviceManager, dev *device) {
 		mgr.wg.Add(1)
 		defer mgr.wg.Done()
@@ -49,6 +56,8 @@ func (mgr *deviceManager) Register(ctx context.Context, dev *device) error {
 			fmt.Println("failed device read", err)
 		}
 	}(ctx, mgr, dev)
+
+	fmt.Println("device registered")
 
 	return nil
 }
@@ -59,6 +68,21 @@ func (mgr *deviceManager) Queue() chan []byte {
 
 func (mgr *deviceManager) Errors() chan error {
 	return mgr.errors
+}
+
+func (mgr *deviceManager) Write(name string, buf []byte) error {
+	mgr.RLock()
+	defer mgr.RUnlock()
+	dev, ok := mgr.devices[name]
+	if !ok {
+		return errors.New("device does not exists")
+	}
+
+	if _, err := dev.raw.Write(buf); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func (mgr *deviceManager) Close() {
@@ -95,6 +119,22 @@ func NewDummyDevice(name string) (*device, error) {
 	return dev, nil
 }
 
+func NewLoopbackDevice(name string) (*device, error) {
+	raw, name, err := netDev.OpenLoopbackDevice(name)
+	if err != nil {
+		return nil, err
+	}
+
+	dev := &device{
+		name:       name,
+		raw:        raw,
+		mtu:        65536,
+		headerSize: 14,
+	}
+
+	return dev, nil
+}
+
 // Read
 func (d *device) read(ctx context.Context, queue chan<- []byte, errs chan<- error) error {
 	if d == nil {
@@ -105,11 +145,6 @@ func (d *device) read(ctx context.Context, queue chan<- []byte, errs chan<- erro
 	for {
 		select {
 		case <-ctx.Done():
-			fmt.Println("exiting device read")
-			if err := d.close(); err != nil {
-				return err
-			}
-
 			return nil
 		default:
 			n, err := d.raw.Read(buf)
